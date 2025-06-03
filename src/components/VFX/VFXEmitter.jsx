@@ -3,6 +3,48 @@
 import { forwardRef, useImperativeHandle, useRef } from "react";
 import { useVFX } from "./VFXStore";
 import { useFrame } from "@react-three/fiber";
+import { randFloat, randInt } from "three/src/math/MathUtils.js";
+
+import { Euler, Quaternion, Vector3 } from "three";
+
+const worldPosition = new Vector3();
+const worldQuaternion = new Quaternion();
+const worldEuler = new Euler();
+const worldRotation = new Euler();
+const worldScale = new Vector3();
+
+/**
+ * @typedef {Object} VFXEmitterSettings
+ * @property {number} [duration=1]
+ * @property {number} [nbParticles=1000]
+ * @property {"time"|"burst"} [spawnMode="time"]
+ * @property {boolean} [loop=false]
+ * @property {number} [delay=0]
+ * @property {string[]} [colorStart=["white", "skyblue"]]
+ * @property {string[]} [colorEnd=[]]
+ * @property {[number, number]} [particlesLifetime=[0.1, 1]]
+ * @property {[number, number]} [speed=[5, 20]]
+ * @property {[number, number]} [size=[0.1, 1]]
+ * @property {[number, number, number]} [startPositionMin=[-1, -1, -1]]
+ * @property {[number, number, number]} [startPositionMax=[1, 1, 1]]
+ * @property {[number, number, number]} [startRotationMin=[0, 0, 0]]
+ * @property {[number, number, number]} [startRotationMax=[0, 0, 0]]
+ * @property {[number, number, number]} [rotationSpeedMin=[0, 0, 0]]
+ * @property {[number, number, number]} [rotationSpeedMax=[0, 0, 0]]
+ * @property {[number, number, number]} [directionMin=[0, 0, 0]]
+ * @property {[number, number, number]} [directionMax=[0, 0, 0]]
+ */
+
+/**
+ * @typedef {Object} VFXEmitterProps
+ * @property {VFXEmitterSettings} [settings]
+ * @property {string} emitter
+ * @property {React.RefObject<THREE.Object3D>} [ref]
+ */
+
+/**
+ * @type React.FC<VFXEmitterProps>
+ */
 
 export const VFXEmitter = forwardRef(
   ({ emitter, settings = {}, ...props }, forwardedRef) => {
@@ -35,7 +77,8 @@ export const VFXEmitter = forwardRef(
     const emitted = useRef(0);
     const elapsedTime = useRef(0);
 
-    useFrame((_, delta) => {
+    useFrame(({clock}, delta) => {
+      const time = clock.elapsedTime
       if (emitted.current < nbParticles || loop) {
         if (!ref) {
           return;
@@ -52,7 +95,46 @@ export const VFXEmitter = forwardRef(
 
         const rate = particlesToEmit - emitted.current;
         if (rate > 0 && elapsedTime.current >= delay) {
-          emit(emitter, rate);
+          emit(emitter, rate, () => {
+            ref.current.updateWorldMatrix(true);
+            const worldMatrix = ref.current.matrixWorld;
+            worldMatrix.decompose(worldPosition, worldQuaternion, worldScale);
+            worldEuler.setFromQuaternion(worldQuaternion);
+            worldRotation.setFromQuaternion(worldQuaternion);
+
+            const randSize = randFloat(size[0], size[1]);
+            const color = colorStart[randInt(0, colorStart.length - 1)];
+            return {
+              position: [
+                worldPosition.x + randFloat(startPositionMin[0], startPositionMax[0]),
+                worldPosition.y + randFloat(startPositionMin[1], startPositionMax[1]),
+                worldPosition.z + randFloat(startPositionMin[2], startPositionMax[2]),
+              ],
+              direction: [
+                randFloat(directionMin[0], directionMax[0]),
+                randFloat(directionMin[1], directionMax[1]),
+                randFloat(directionMin[2], directionMax[2]),
+              ],
+              scale: [randSize, randSize, randSize],
+              rotation: [
+                worldPosition.x + randFloat(startRotationMin[0], startRotationMax[0]),
+                worldPosition.y + randFloat(startRotationMin[1], startRotationMax[1]),
+                worldPosition.z + randFloat(startRotationMin[2], startRotationMax[2]),
+              ],
+              rotationSpeed: [
+                randFloat(rotationSpeedMin[0], rotationSpeedMax[0]),
+                randFloat(rotationSpeedMin[1], rotationSpeedMax[1]),
+                randFloat(rotationSpeedMin[2], rotationSpeedMax[2]),
+              ],
+              lifetime: [time, randFloat(particlesLifetime[0], particlesLifetime[1])],
+              colorStart: color,
+              colorEnd: colorEnd?.length
+                ? colorEnd[randInt(0, colorEnd.length - 1)]
+                : color,
+              speed: [randFloat(speed[0], speed[1])],
+            }
+          },
+          );
           emitted.current += rate;
         }
       }

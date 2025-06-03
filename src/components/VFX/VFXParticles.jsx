@@ -16,6 +16,9 @@ import { randFloat, randFloatSpread } from "three/src/math/MathUtils.js";
 import { shaderMaterial } from "@react-three/drei";
 import { useVFX } from "./VFXStore";
 
+import { AdditiveBlending } from "three";
+
+
 const tmpPosition = new Vector3();
 const tmpRotationEuler = new Euler();
 const tmpRotation = new Quaternion();
@@ -25,11 +28,14 @@ const tmpMatrix = new Matrix4();
 const tmpColor = new Color();
 
 export const VFXParticles = ({ name, settings = {} }) => {
-  const { nbParticles = 1000 } = settings;
+  const { nbParticles = 1000, intensity = 1 } = settings;
   const mesh = useRef();
   const defaultGeometry = useMemo(() => new PlaneGeometry(0.5, 0.5), []);
 
   const cursor = useRef(0);
+  const lastCursor = useRef(0);
+  const needsUpdate = useRef(false);
+
 
   const emit = (count, setup) => {
 
@@ -61,22 +67,6 @@ export const VFXParticles = ({ name, settings = {} }) => {
         colorEnd,
         speed,
       } = setup();
-
-      // const position = [
-      //   randFloatSpread(0.1),
-      //   randFloatSpread(0.1),
-      //   randFloatSpread(0.1),
-      // ];
-      // const scale = [
-      //   randFloatSpread(1),
-      //   randFloatSpread(1),
-      //   randFloatSpread(1),
-      // ];
-      // const rotation = [
-      //   randFloatSpread(Math.PI),
-      //   randFloatSpread(Math.PI),
-      //   randFloatSpread(Math.PI),
-      // ];
       
       tmpPosition.set(...position);
       tmpRotationEuler.set(...rotation);
@@ -86,14 +76,14 @@ export const VFXParticles = ({ name, settings = {} }) => {
       mesh.current.setMatrixAt(cursor.current, tmpMatrix);
 
       // tmpColor.setRGB(Math.random(), Math.random(), Math.random());
-      tmpColor.setRGB(1, 1, 1);
+      tmpColor.set(colorStart);
       instanceColor.set(
         [tmpColor.r, tmpColor.g, tmpColor.b],
         cursor.current * 3
       );
 
       // tmpColor.setRGB(Math.random(), Math.random(), Math.random());
-      tmpColor.setRGB(0, 0, 0);
+      tmpColor.set(colorEnd);
       instanceColorEnd.set(
         [tmpColor.r, tmpColor.g, tmpColor.b],
         cursor.current * 3
@@ -102,34 +92,16 @@ export const VFXParticles = ({ name, settings = {} }) => {
       cursor.current++;
       cursor.current = cursor.current % nbParticles;
 
-      const direction = [
-        randFloatSpread(0.5),
-        1,
-        randFloatSpread(0.5),
-      ];
+     
       instanceDirection.set(direction, cursor.current * 3);
 
-      const lifetime = [randFloat(0, 5), randFloat(0.1, 5)];
       instanceLifetime.set(lifetime, cursor.current * 2);
 
-      const speed = randFloat(1, 2);
       instanceSpeed.set([speed], cursor.current);
 
-      const rotationSpeed = [
-        randFloatSpread(3),
-        randFloatSpread(3),
-        randFloatSpread(3),
-      ];
       instanceRotationSpeed.set(rotationSpeed, cursor.current * 3);
     }
-
-    mesh.current.instanceMatrix.needsUpdate = true;
-    instanceColor.needsUpdate = true;
-    instanceColorEnd.needsUpdate = true;
-    instanceDirection.needsUpdate = true;
-    instanceLifetime.needsUpdate = true;
-    instanceSpeed.needsUpdate = true;
-    instanceRotationSpeed.needsUpdate = true;
+    needsUpdate.current = true;
   };
 
 
@@ -158,12 +130,52 @@ export const VFXParticles = ({ name, settings = {} }) => {
       return;
     }
     mesh.current.material.uniforms.uTime.value = clock.elapsedTime;
+    mesh.current.material.uniforms.uIntensity.value = intensity;
   });
+
+  const onBeforeRender = () => {
+    if (!needsUpdate.current || !mesh.current) {
+      return;
+    }
+
+    const attributes = [
+      mesh.current.instanceMatrix,
+      mesh.current.geometry.getAttribute("instanceColor"),
+      mesh.current.geometry.getAttribute("instanceColorEnd"),
+      mesh.current.geometry.getAttribute("instanceDirection"),
+      mesh.current.geometry.getAttribute("instanceLifetime"),
+      mesh.current.geometry.getAttribute("instanceSpeed"),
+      mesh.current.geometry.getAttribute("instanceRotationSpeed"),
+    ];
+    
+    attributes.forEach((attribute) => {
+      attribute.clearUpdateRanges();
+      if (lastCursor.current > cursor.current) {
+        attribute.addUpdateRange(0, cursor.current * attribute.itemSize);
+        attribute.addUpdateRange(
+          lastCursor.current * attribute.itemSize,
+          nbParticles * attribute.itemSize -
+            lastCursor.current * attribute.itemSize
+        );
+      } else {
+        attribute.addUpdateRange(
+          lastCursor.current * attribute.itemSize,
+          cursor.current * attribute.itemSize -
+            lastCursor.current * attribute.itemSize
+        );
+      }
+      attribute.needsUpdate = true;
+    });
+    lastCursor.current = cursor.current;
+    needsUpdate.current = false;
+
+    
+  }
 
   return (
     <>
-      <instancedMesh args={[defaultGeometry, null, nbParticles]} ref={mesh}>
-        <particlesMaterial color="orange" />
+      <instancedMesh args={[defaultGeometry, null, nbParticles]} ref={mesh} onBeforeRender={onBeforeRender}>
+        <particlesMaterial color="orange" blending={AdditiveBlending} />
         <instancedBufferAttribute
           attach={"geometry-attributes-instanceColor"}
           args={[attributeArrays.instanceColor]}
@@ -214,6 +226,7 @@ export const VFXParticles = ({ name, settings = {} }) => {
 const ParticlesMaterial = shaderMaterial(
   {
     uTime: 0,
+    uIntensity: 1,
   },
   /* glsl */ `
 
@@ -268,6 +281,10 @@ const ParticlesMaterial = shaderMaterial(
     float duration = instanceLifetime.y;
     float age = uTime - startTime;
     vProgress = age / duration;
+    if (vProgress < 0.0 || vProgress > 1.0) {
+    gl_Position = vec4(vec3(9999.0), 1.0);
+    return;
+  }
 
     vec3 normalizedDirection = length(instanceDirection) > 0.0 ? normalize(instanceDirection) : vec3(0.0);
     vec3 offset = normalizedDirection * age * instanceSpeed;

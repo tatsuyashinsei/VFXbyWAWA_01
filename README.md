@@ -8,3 +8,6 @@ yarn dev
 
 
 ![image](https://user-images.githubusercontent.com/6551176/221732091-23ee52cb-4150-42fa-b998-43628d7a6b0d.png)
+
+
+250603 section 38, VFX Engine until 49:46
